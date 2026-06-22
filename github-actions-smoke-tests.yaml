@@ -1,0 +1,73 @@
+name: run-smoke-tests
+
+# ------------------------------------------------------------------------------
+# PURPOSE: 
+# This workflow acts as an automated testing gate for CI/CD deployments. 
+# It is designed to be triggered programmatically by an external orchestrator 
+# (like n8n) via an API call, rather than running on a standard push/pull event.
+# ------------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      n8n_resume_url:
+        description: 'The exact Webhook URL required to send the payload back and resume the n8n automation pipeline'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run actions/checkout@v4
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # The --legacy-peer-deps flag ensures the pipeline remains reliable 
+      # and does not crash due to upstream dependency version conflicts 
+      # that are common in modern React/Node environments.
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      # DUAL REPORTING STRATEGY:
+      # 1. 'list' reporter prints live, human-readable progress directly to the GitHub Actions console.
+      # 2. 'json' reporter quietly builds a machine-readable results file in the background.
+      # continue-on-error ensures the pipeline moves to the next step to report the failure, rather than just dying.
+      - name: Run Playwright tests
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
+        run: npx playwright test tests/smoke/ --reporter=list,json
+        continue-on-error: true
+
+      # DATA EXTRACTION & CHATOPS HANDOFF:
+      # This step parses the raw Playwright JSON file using 'jq', calculates the test 
+      # statistics, and extracts the exact names of any failed tests. It then posts this 
+      # rich payload back to the waiting n8n webhook to trigger a Telegram alert.
+      - name: Report Rich Results to n8n
+        run: |
+          # 1. Extract and calculate test metrics
+          TOTAL=$(jq '.stats.expected + .stats.unexpected + .stats.flaky' results.json)
+          PASSED=$(jq '.stats.expected' results.json)
+          FAILED=$(jq '.stats.unexpected' results.json)
+          STATUS=$([ "$FAILED" -eq 0 ] && echo "success" || echo "failed")
+          
+          # 2. Extract an array of exactly which tests failed by their title
+          FAILED_NAMES=$(jq '[.. | objects | select(has("ok") and .ok == false and has("title")) | .title]' results.json)
+          
+          # 3. Transmit the rich payload back to the CI/CD orchestrator
+          curl -X POST "${{ github.event.inputs.n8n_resume_url }}" \
+          -H "Content-Type: application/json" \
+          -d "{\"status\": \"$STATUS\", \"total\": $TOTAL, \"passed\": $PASSED, \"failed\": $FAILED, \"failedNames\": $FAILED_NAMES}"
+          
+          # 4. ENFORCE PIPELINE INTEGRITY:
+          # If tests failed, we must manually exit with an error code (1). 
+          # Otherwise, GitHub will falsely mark this entire Action run as a "Success" 
+          # just because the curl command worked, which would bypass branch protection rules.
+          if [ "$FAILED" -gt 0 ]; then exit 1; fi

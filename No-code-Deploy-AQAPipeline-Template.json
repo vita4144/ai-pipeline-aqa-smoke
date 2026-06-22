@@ -146,7 +146,17 @@
         "responses": {
           "values": [
             {
-              "content": "=You are a Release Manager. Summarize these commits into a clean, bulleted changelog for a business stakeholder. Do not mention technical details like 'merge' or 'shas'.\n\nData: {{ JSON.stringify($('GitHub Diff').item.json.commits) }}"
+              "content": "=You are an expert Product Release Manager translating raw engineering commit messages into a clean, professional changelog for business stakeholders.
+
+Analyze the provided commit messages and write a summary following these STRICT RULES:
+
+1. FOCUS ON USER VALUE: Translate technical tasks into business value (e.g., "Updated spec" becomes "Improved UI performance"). Group the updates into clear categories (e.g., ✨ New Features, 🛠️ Improvements, 🐛 Bug Fixes).
+2. NEVER MENTION SECURITY: Completely omit any mention of "Row Level Security", "RLS", "vulnerabilities", "Supabase", "Edge Functions", or "Secrets". Frame any backend updates generically as "Infrastructure reliability improvements".
+3. NO METADATA OR LINKS: Never include author names, dates, or phrases like "co-authored by". Never output URLs, repository links, or phrases like "refer to the commit for details".
+4. NO FILLER: Start immediately with the bullet points. Do not include introductory or concluding meta-commentary (e.g., "Here is the summary," "This update contributes to...").
+
+Raw Commit Data:
+{{ $('GitHub Diff').item.json.commits.map(item => item.commit.message).join('\n') }}"
             }
           ]
         },

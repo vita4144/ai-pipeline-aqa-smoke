@@ -50,24 +50,26 @@ jobs:
       # This step parses the raw Playwright JSON file using 'jq', calculates the test 
       # statistics, and extracts the exact names of any failed tests. It then posts this 
       # rich payload back to the waiting n8n webhook to trigger a Telegram alert.
+      # 1. Extract and calculate test metrics
+      # 2. Extract an array of exactly which tests failed by their title
+      # 3. Transmit the rich payload back to the CI/CD orchestrator
+      # 4. ENFORCE PIPELINE INTEGRITY
+          # If tests failed, we must manually exit with an error code (1). 
+          # Otherwise, GitHub will falsely mark this entire Action run as a "Success" 
+          # just because the curl command worked, which would bypass branch protection rules.
+
+
       - name: Report Rich Results to n8n
         run: |
-          # 1. Extract and calculate test metrics
           TOTAL=$(jq '.stats.expected + .stats.unexpected + .stats.flaky' results.json)
           PASSED=$(jq '.stats.expected' results.json)
           FAILED=$(jq '.stats.unexpected' results.json)
           STATUS=$([ "$FAILED" -eq 0 ] && echo "success" || echo "failed")
           
-          # 2. Extract an array of exactly which tests failed by their title
           FAILED_NAMES=$(jq '[.. | objects | select(has("ok") and .ok == false and has("title")) | .title]' results.json)
           
-          # 3. Transmit the rich payload back to the CI/CD orchestrator
           curl -X POST "${{ github.event.inputs.n8n_resume_url }}" \
           -H "Content-Type: application/json" \
           -d "{\"status\": \"$STATUS\", \"total\": $TOTAL, \"passed\": $PASSED, \"failed\": $FAILED, \"failedNames\": $FAILED_NAMES}"
           
-          # 4. ENFORCE PIPELINE INTEGRITY:
-          # If tests failed, we must manually exit with an error code (1). 
-          # Otherwise, GitHub will falsely mark this entire Action run as a "Success" 
-          # just because the curl command worked, which would bypass branch protection rules.
           if [ "$FAILED" -gt 0 ]; then exit 1; fi
